@@ -1,5 +1,11 @@
+/**
+*  Based on work by vseven, added toggle input
+*
+*/
+
+
 metadata {
-	definition (name: "Door/Window Sensor for Smoke with Input Toggle", namespace: "doncaruana", author: "Don Caruana (based on work by vseven).") {
+	definition (name: "Door/Window Sensor for Smoke with Input Toggle", namespace: "doncaruana", author: "Don Caruana") {
 		capability "Smoke Detector"
 		capability "Sensor"
 		capability "Battery"
