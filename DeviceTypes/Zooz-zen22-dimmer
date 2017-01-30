@@ -17,13 +17,14 @@
  *         ZWavePlus Info
  *  
  *   Parm Size Description                                   Value
- *      1    1 Invert Switch                                 1 (Default)-Upper paddle turns light off, 0-Lower paddle turns light off
+ *      1    1 Invert Switch                                 0 (Default)-Upper paddle turns light on, 1-Lower paddle turns light on
  *      2    1 LED Indicator                                 0 (Default)-LED is on when light is OFF, 1-LED is on when light is ON
- *    Note: Above is from Zooz, but parm 2 doesn't exist, and parm 1 is default of 0 to work normal
- *
+ *   Note: There seems to be a bug in SmartThings or possibly in the device. Getting parameter 1 works fine, but when attempting to do a
+ *          get on parameter 2, you get: Exception 'java.lang.IndexOutOfBoundsException: toIndex = 4' encountered parsing 'cmd: 7006, payload: 02 02 00'
+ *          For that reason, the configurationgets on parameter 2 are commented out. If SmartThings or the device get fixed, it can be uncommented
  */
 metadata {
-	definition (name: "Zooz Zen22 Dimmer Switch", namespace: "smartthings", author: "SmartThings") {
+	definition (name: "Zooz Zen22 Dimmer Switch", namespace: "doncaruana", author: "Don Caruana") {
 		capability "Switch Level"
 		capability "Actuator"
 		capability "Health Check"
@@ -34,7 +35,7 @@ metadata {
 
 //zw:L type:1101 mfr:015D prod:0112 model:241C ver:20.16 zwv:4.05 lib:06 cc:5E,85,59,70,5A,72,73,27,26,86 role:05 ff:8600 ui:8600
 
-		fingerprint mfr:"015D", prod:"0112", model:"241C", deviceJoinName: "Zooz Zen22 Dimmer"
+	fingerprint mfr:"015D", prod:"0112", model:"241C", deviceJoinName: "Zooz Zen22 Dimmer"
     fingerprint deviceId:"0x1101", inClusters: "0x5E,0x59,0x85,0x70,0x5A,0x72,0x73,0x27,0x26,0x86"
     fingerprint cc: "0x5E,0x59,0x85,0x70,0x5A,0x72,0x73,0x27,0x26,0x86", mfr:"015D", prod:"0112", model:"241C", deviceJoinName: "Zooz Zen22 Dimmer"
 	}
@@ -58,7 +59,7 @@ metadata {
 	}
 
 	preferences {
-//		input "ledIndicator", "bool", title: "LED on Always", description: "LED will be on when light OFF if not set", required: false, defaultValue: false
+		input "ledIndicator", "bool", title: "LED on when light on", description: "LED will be on when light OFF if not set", required: false, defaultValue: false
 		input "invertSwitch", "bool", title: "Invert Switch", description: "Flip switch upside down", required: false, defaultValue: false
   }
 
@@ -89,6 +90,21 @@ metadata {
 	}
 }
 
+private getCommandClassVersions() {
+	[
+		0x59: 1,  // AssociationGrpInfo
+		0x85: 2,  // Association
+		0x20: 1,  // Basic
+		0x5A: 1,  // DeviceResetLocally
+		0x72: 2,  // ManufacturerSpecific
+		0x73: 1,  // Powerlevel
+		0x86: 2,  // Version
+		0x5E: 2,  // ZwaveplusInfo
+		0x27: 1,  // All Switch
+		0x26: 1,  // Multilevel Switch
+        0x70: 1,  // Configuration  -- Note that this is not an officially listed command class, but must be included as it can be configured
+	]
+}
 
 def configure() {
 	log.debug "configure()"
@@ -106,7 +122,7 @@ def configure() {
 def updated(){
     log.debug "Updated with settings: ${settings}"
 	def commands = []
-//    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [ledIndicator == true ? 1 : 0], parameterNumber: 2, size: 1).format())
+    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [ledIndicator == true ? 1 : 0], parameterNumber: 2, size: 1).format())
     commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [invertSwitch == true ? 1 : 0], parameterNumber: 1, size: 1).format())
     commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 1).format())
 //    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 2).format())
@@ -119,7 +135,7 @@ def parse(String description) {
 	def result = null
 	if (description != "updated") {
 		log.debug "parse() >> zwave.parse($description)"
-		def cmd = zwave.parse(description, [0x20: 1, 0x26: 1, 0x70: 1])
+		def cmd = zwave.parse(description, commandClassVersions)
 		if (cmd) {
 			result = zwaveEvent(cmd)
 		}
@@ -162,7 +178,7 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport 
 	def name = ""
     def value = ""
     def reportValue = cmd.configurationValue[0]
-    log.debug "size = $cmd.size"
+    log.debug "---CONFIGURATION REPORT V1--- ${device.displayName} parameter ${cmd.parameterNumber} with a byte size of ${cmd.size} is set to ${cmd.configurationValue}"
     switch (cmd.parameterNumber) {
         case 1:
             name = "TopOn"
@@ -170,10 +186,9 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport 
             log.debug "TopOn = $value"
             break
         case 2:
-            name = "LEDAlways"
-            state.d_invertOutputBasic = value
+            name = "LEDFollow"
             value = reportValue == 1 ? "true" : "false"
-            log.debug "LEDAlways = $value"
+            log.debug "LEDFollow = $value"
             break
         default:
             break
@@ -264,11 +279,3 @@ def refresh() {
 	delayBetween(commands,100)
 }
 
-def invertSwitch(invert=true) {
-	if (invert) {
-		zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 4, size: 1).format()
-	}
-	else {
-		zwave.configurationV1.configurationSet(configurationValue: [0], parameterNumber: 4, size: 1).format()
-	}
-}
