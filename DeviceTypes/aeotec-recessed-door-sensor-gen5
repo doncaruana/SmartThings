@@ -2,7 +2,7 @@
  *  Aeotec Recessed Door Sensor Gen5
  *  Based On: Z-Wave Door/Window Sensor
  *
- *  Date: 2017-1-21
+ *  Date: 2017-1-29
  *  Supported Command Classes
  *  
  *         Association
@@ -29,6 +29,7 @@
  *   Parm Size Description                                   Value
  *      1    1 Which value to send for Sensor Binary Report  0 (Default)-Sensor triggered on=0xFF, 1-Sensor triggered on=0x00
  *      3    1 Which value is sent for Sensor Basic Report   0 (Default)-Sensor triggered on=0xFF, 1-Sensor triggered on=0x00
+ *     39    1 Low Battery threshold                         10 (Default), 10-50, Threshold below which a low battery is reported, must enable 101 and 111 to work
  *    101    1 Enable the function of low battery checking   0 (Default)-Disable low battery checking, 1-Enable low battery checking
  *    111    4 Set the interval time of the battery report   86640 (Default)-disabled, 1 to 2147483647 in seconds
  *    121    4 Which command to send                         256 (Default)-Basic, 16-Binary, 272-Both
@@ -37,15 +38,21 @@
  *
  *    Enabling battery checking or setting the battery interval (which is rounded to 4 minute intervals anyway) seems to have no effect whatsoever. The
  *      wakeup interval, although it's supposed to be a different setting, follows this same, 4 minute rule. It's pointless to set either.
- *  
+ * 
+ *    This device handler will just rely on the smartthings default wakeup interval of 4 hours and check the battery once a day (no sooner than every 23 hours)
  */
 
 metadata {
 	definition (name: "Aeotec Recessed Door Sensor Gen5", namespace: "doncaruana", author: "Don Caruana") {
+
+    attribute   "needUpdate", "string"
+
 		capability "Contact Sensor"
 		capability "Configuration"
 		capability "Battery"
 		capability "Sensor"
+		
+		
 
 //zw:Ss type:0701 mfr:0086 prod:0102 model:0059 ver:1.13 zwv:3.92 lib:03 cc:5E,86,72,98 ccOut:5A,82 sec:30,80,84,70,85,59,71,7A,73 role:06 ff:8C00 ui:8C00
        
@@ -54,8 +61,42 @@ metadata {
     fingerprint cc: "0x5E,0x86,0x72,0x98", ccout:"0x5A,0x82", mfr:"0086", prod:"0102", model:"0059", deviceJoinName:"Aeotec Recessed Door Sensor Gen5"
 	}
 
+
+    preferences {
+    input(
+        title : "Settings with an asterisk are physical and will not change until the next wakeup."
+        ,description : null
+        ,type : "paragraph"
+        )
+		input "p_invertOutput", "boolean", 
+			title: "Invert open/closed reporting",
+			defaultValue: false,
+			displayDuringSetup: true
+		input "p_lowBatteryCheck", "boolean", 
+			title: "*Enable low battery checking?",
+			defaultValue: false,
+			displayDuringSetup: true
+		input "p_batteryInterval",
+        	"enum",
+            title: "*Low Battery Interval - Only used if Low Battery Checking is enabled",
+            description: "A value in seconds.",
+            // The actual default is 86640, instead of 86400, which is not selectable as a value. Setting this prevents the "need" for an immediate update
+            defaultValue: 86640,
+            required: false,
+            displayDuringSetup: false,
+            options: buildInterval()
+		input "p_wakeupInterval",
+        	"enum",
+            title: "*Device Wakeup Interval",
+            description: "A value in seconds.",
+            defaultValue: 14400,
+            required: false,
+            displayDuringSetup: true,
+            options: buildInterval()
+	}
+
 	tiles(scale: 2) {
-		multiAttributeTile(name:"contact", type: "generic", width: 6, height: 4){
+		multiAttributeTile(name:"contact", type: "generic", width: 6, height: 4, canChangeIcon: true){
 			tileAttribute ("device.contact", key: "PRIMARY_CONTROL") {
 				attributeState "open", label:'${name}', icon:"st.contact.contact.open", backgroundColor:"#ffa81e"
 				attributeState "closed", label:'${name}', icon:"st.contact.contact.closed", backgroundColor:"#79b821"
@@ -64,9 +105,13 @@ metadata {
 		valueTile("battery", "device.battery", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
 			state "battery", label:'${currentValue}% battery', unit:""
 		}
+    standardTile("configure", "device.needUpdate", inactiveLabel: false, width: 2, height: 2) {
+        state "NO" , label:'Synced', action:"configuration.configure", icon:"st.secondary.refresh-icon", backgroundColor:"#99CC33"
+        state "YES", label:'Pending', action:"configuration.configure", icon:"st.secondary.refresh-icon", backgroundColor:"#CCCC33"
+    }
 
 		main (["contact"])
-		details(["contact","battery"])
+		details(["contact","battery","configure"])
 	}
 
 	simulator {
@@ -81,7 +126,6 @@ metadata {
 	}
 }
 
-
 def configure() {
 	log.debug "configure()"
 	def cmds = []
@@ -90,6 +134,10 @@ def configure() {
 		// secure inclusion may not be complete yet
 		cmds << "delay 1000"
 	}
+  
+  //Since there is a bug in SmartThings that prevents reading wakeupinterval and we know, by default, SmartThings
+  //sets it to 4 hours, just set our "device parameter" to that value.
+  state.d_wakeupInterval = 14400
 
 	log.debug "Listing all device parameters and defaults since this is new inclusion"
 	cmds += secureSequence([
@@ -101,7 +149,6 @@ def configure() {
 		zwave.configurationV1.configurationGet(parameterNumber: 121),
 		zwave.configurationV1.configurationGet(parameterNumber: 252),
 		zwave.configurationV1.configurationGet(parameterNumber: 254),
-		zwave.configurationV1.configurationSet(parameterNumber: 101),
 		zwave.batteryV1.batteryGet(),
 	], 500)
 
@@ -155,6 +202,42 @@ def parse(String description) {
 }
 
 
+/**
+* Triggered when Done button is pushed on Preference Pane
+*/
+def updated()
+{
+	  def isUpdateNeeded = "NO"
+	  if (p_batteryInterval != null && p_batteryInterval != state.d_batteryInterval) {isUpdateNeeded = "YES"}
+	  if (p_wakeupInterval != null && p_wakeupInterval != state.d_wakeupInterval) {isUpdateNeeded = "YES"}
+	  if (p_lowBatteryCheck != null && p_lowBatteryCheck != state.d_lowBatteryCheck) {isUpdateNeeded = "YES"}
+    sendEvent(name:"needUpdate", value: isUpdateNeeded, displayed:false, isStateChange: true)
+}
+
+/**
+* Only device parameter changes require a state change 
+*/
+def update_needed_settings()
+{
+  def cmds = []
+  if (isUpdateNeeded == "YES") {
+    isUpdateNeeded = "NO"
+    // can't read the wakeup interval, so just set it to the pref value here
+    state.d_wakeupInterval = p_wakeupInterval
+    cmds += secureSequence([
+		zwave.wakeUpV1.wakeUpIntervalSet(seconds: p_wakeupInterval, nodeid:zwaveHubNodeId),
+		zwave.configurationV1.configurationSet(parameterNumber: 101, size: 1, scaledConfigurationValue: p_lowBatteryCheck),
+		zwave.configurationV1.configurationSet(parameterNumber: 111, size: 4, scaledConfigurationValue: p_batteryInterval),
+		zwave.configurationV1.configurationGet(parameterNumber: 101),
+		zwave.configurationV1.configurationGet(parameterNumber: 111),
+	  ], 500)
+	}
+  	cmds << "delay 8000"
+    sendEvent(name:"needUpdate", value: isUpdateNeeded, displayed:false, isStateChange: true)
+	  return cmds
+}
+
+
 def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport cmd) {
 	def name = ""
     def value = ""
@@ -162,28 +245,33 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport 
     log.debug "size = $cmd.size"
     switch (cmd.parameterNumber) {
         case 1:
-            name = "invertOutputBinary"
+            name = "d_invertOutputBinary"
+            state.d_invertOutputBinary = value
             value = reportValue == 1 ? "true" : "false"
             log.debug "invertOutputBinary = $value"
             break
         case 3:
-            name = "invertOutput"
+            name = "d_invertOutputBasic"
+            state.d_invertOutputBasic = value
             value = reportValue == 1 ? "true" : "false"
-            log.debug "invertOutput = $value"
+            log.debug "invertOutputBasic = $value"
             break
         case 101:
-            name = "batteryCheck"
+            name = "d_lowBatteryCheck"
             value = reportValue
-            log.debug "batteryCheck = $value"
+            log.debug "lowBatteryCheck = $value"
+            state.d_lowBatteryCheck = value
             break
         case 111:
-            name = "batteryInterval"
+            name = "d_batteryInterval"
             value = cmd.configurationValue[3] + (cmd.configurationValue[2] * 0x100) + (cmd.configurationValue[1] * 0x10000) + (cmd.configurationValue[0] * 0x1000000)
             log.debug "batteryInterval = $value"
+            state.d_batteryInterval = value
             break
         case 121:
-            name = "sendType"
+            name = "d_sendType"
             value = cmd.configurationValue[3] + (cmd.configurationValue[2] * 0x100) + (cmd.configurationValue[1] * 0x10000) + (cmd.configurationValue[0] * 0x1000000)
+            state.d_sendType = value
 						switch (value) {
 							case 16:
 							  value = "binary"
@@ -200,14 +288,16 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport 
             log.debug "sendType = $value"
             break
         case 252:
-            name = "lockConfig"
+            name = "d_lockConfig"
             value = reportValue
             log.debug "lockConfig = $value"
+            state.d_lockConfig = value
             break
         case 254:
-            name = "deviceTag"
+            name = "d_deviceTag"
             value = cmd.configurationValue[1] + (cmd.configurationValue[0] * 0x100)
             log.debug "deviceTag = $value"
+            state.d_deviceTag = value
             break
         default:
             break
@@ -228,10 +318,15 @@ def zwaveEvent(physicalgraph.zwave.commands.securityv1.SecurityMessageEncapsulat
 }
 
 def sensorValueEvent(value) {
+	//If the invertOutput parameter is set, logically invert the output value
+  log.debug "value = ${value}, invert = ${p_invertOutput}"
+  if (p_invertOutput) {value = value ^ 0xFF}
 	if (value) {
 		createEvent(name: "contact", value: "open", descriptionText: "$device.displayName is open")
+		log.debug "open ${value}"
 	} else {
 		createEvent(name: "contact", value: "closed", descriptionText: "$device.displayName is closed")
+		log.debug "closed ${value}"
 	}
 }
 
@@ -294,7 +389,7 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv2.WakeUpNotification cmd) {
 		cmds << secure(zwave.manufacturerSpecificV2.manufacturerSpecificGet())
 		cmds << "delay 2000"
 	}
-	if (!state.lastbat || now() - state.lastbat > 23*60*60*1000) {  //check no sooner than once every 23 hours
+	if (!state.lastbat || now() - state.lastbat > 23*60*60*1000) {  //check no sooner than once every 23 hours (once a day)
 		log.debug "checking battery"
 		event.descriptionText += ", requesting battery"
 		cmds << secure(zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType:1, scale:1))
@@ -304,6 +399,9 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv2.WakeUpNotification cmd) {
 	} else {
 		log.debug "not checking battery, was updated ${(now() - state.lastbat)/60000 as int} min ago"
 	}
+		
+  cmds+=update_needed_settings()
+
 	cmds << secure(zwave.wakeUpV1.wakeUpNoMoreInformation())
 
 	return [event, response(cmds)]
@@ -356,4 +454,39 @@ private secure(physicalgraph.zwave.Command cmd) {
 
 private secureSequence(commands, delay=200) {
 	delayBetween(commands.collect{ secure(it) }, delay)
+}
+
+def buildInterval() {
+
+  def intervalList = []
+   intervalList << [ "240" : "4 minutes" ]
+   intervalList << [ "480" : "8 minutes" ]
+   intervalList << [ "720" : "12 minutes" ]
+   intervalList << [ "960" : "16 minutes" ]
+   intervalList << [ "1200" : "20 minutes" ]
+   intervalList << [ "1440" : "24 minutes" ]
+   intervalList << [ "1800" : "30 minutes" ]
+   intervalList << [ "3600" : "1 hour" ]
+   intervalList << [ "7200" : "2 hours" ]
+   intervalList << [ "10800" : "3 hours" ]
+   intervalList << [ "14400" : "4 hours" ]
+   intervalList << [ "18000" : "5 hours" ]
+   intervalList << [ "21600" : "6 hours" ]
+   intervalList << [ "36000" : "10 hours" ]
+   intervalList << [ "43200" : "12 hours" ]
+   intervalList << [ "86400" : "24 hours" ]
+   intervalList << [ "172800" : "2 days" ]
+   intervalList << [ "259200" : "3 days" ]
+   intervalList << [ "345600" : "4 days" ]
+   intervalList << [ "432000" : "5 days" ]
+   intervalList << [ "518400" : "6 days" ]
+   intervalList << [ "604800" : "1 week" ]
+   intervalList << [ "1209600" : "2 weeks" ]
+   intervalList << [ "1814400" : "3 weeks" ]
+   intervalList << [ "2592000" : "1 month (30 days)" ]
+   intervalList << [ "5184000" : "2 months (60 days)" ]
+   intervalList << [ "7862400" : "3 months (91 days)" ]
+   intervalList << [ "10454400" : "4 months (121 days)" ]
+   intervalList << [ "15768000" : "Half year" ]
+   intervalList << [ "31536000" : "1 year" ]
 }
