@@ -1,33 +1,34 @@
 /**
  *  Zooz Zen22 Dimmer Switch
- *  Based On: Z-Wave Dimmer Switch
  *
- *  Date: 2017-1-29
+ *  Date: 2017-2-10
  *  Supported Command Classes
  *  
- *         Association
+ *         Association v2
  *         Association Group Information
+ *         Configuration (see Note2 below)
  *         Device Reset Local
- *         Manufacturer Specific
+ *         Manufacturer Specific v2
  *         Powerlevel
- *         Version
  *         Switch_all
  *         Switch_multilevel
- *         Version
- *         ZWavePlus Info
+ *         Version v2
+ *         ZWavePlus Info v2
  *  
  *   Parm Size Description                                   Value
  *      1    1 Invert Switch                                 0 (Default)-Upper paddle turns light on, 1-Lower paddle turns light on
  *      2    1 LED Indicator                                 0 (Default)-LED is on when light is OFF, 1-LED is on when light is ON
- *   Note: There seems to be a bug in SmartThings or possibly in the device. Getting parameter 1 works fine, but when attempting to do a
- *          get on parameter 2, you get: Exception 'java.lang.IndexOutOfBoundsException: toIndex = 4' encountered parsing 'cmd: 7006, payload: 02 02 00'
- *          For that reason, the configurationgets on parameter 2 are commented out. If SmartThings or the device get fixed, it can be uncommented
+ *   Note1: There is a bug in this device in that it reports the length of parameter 2 as 2, then only sends one value byte. Attempting to retrieve that
+ *          parameter will result in this error: Exception 'java.lang.IndexOutOfBoundsException: toIndex = 4' encountered parsing 'cmd: 7006, payload: 02 02 00'
+ *          The toIndex indicates that it fails looking for the 4th byte of the payload (the 2nd byte is the length).
+ *          The simple workaround is to just look for a configuration report on parameter 2 and add a byte to the returned description. The 2nd byte is the least
+ *          significant byte anyway and also is just not processed in the ConfigurationReport routine. Live logging will show the above error, but otherwise the
+ *          device and handler work fine.
+ *   Note2: Configuration is not officially documented as a command class for this device but it is and must be available to use parameters
  */
 metadata {
 	definition (name: "Zooz Zen22 Dimmer Switch", namespace: "doncaruana", author: "Don Caruana") {
 		capability "Switch Level"
-		capability "Actuator"
-		capability "Health Check"
 		capability "Switch"
 		capability "Polling"
 		capability "Refresh"
@@ -94,7 +95,6 @@ private getCommandClassVersions() {
 	[
 		0x59: 1,  // AssociationGrpInfo
 		0x85: 2,  // Association
-		0x20: 1,  // Basic
 		0x5A: 1,  // DeviceResetLocally
 		0x72: 2,  // ManufacturerSpecific
 		0x73: 1,  // Powerlevel
@@ -102,22 +102,20 @@ private getCommandClassVersions() {
 		0x5E: 2,  // ZwaveplusInfo
 		0x27: 1,  // All Switch
 		0x26: 1,  // Multilevel Switch
-        0x70: 1,  // Configuration  -- Note that this is not an officially listed command class, but must be included as it can be configured
+    0x70: 1,  // Configuration
 	]
 }
 
 def configure() {
 	log.debug "configure()"
 	def cmds = []
-    log.debug "default value"
 
-		cmds << zwave.manufacturerSpecificV2.manufacturerSpecificGet().format()
-		cmds << zwave.configurationV1.configurationGet(parameterNumber: 1).format()
-//		cmds << zwave.configurationV1.configurationGet(parameterNumber: 2).format()
+	cmds << new physicalgraph.device.HubAction(zwave.manufacturerSpecificV2.manufacturerSpecificGet())
+	cmds << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 1).format())
+	cmds << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 2).format())
+	cmds << new physicalgraph.device.HubAction(zwave.manufacturerSpecificV2.manufacturerSpecificGet().format())
     sendHubCommand(cmds, 1500)
 }
-
-
 
 def updated(){
     log.debug "Updated with settings: ${settings}"
@@ -125,7 +123,7 @@ def updated(){
     commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [ledIndicator == true ? 1 : 0], parameterNumber: 2, size: 1).format())
     commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [invertSwitch == true ? 1 : 0], parameterNumber: 1, size: 1).format())
     commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 1).format())
-//    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 2).format())
+    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 2).format())
     sendHubCommand(commands, 1500)
 // Device-Watch simply pings if no device events received for 32min(checkInterval)
 	sendEvent(name: "checkInterval", value: 2 * 15 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
@@ -133,6 +131,11 @@ def updated(){
 
 def parse(String description) {
 	def result = null
+    // Special routine for firmware bug - see Notes1
+    if (description.indexOf('command: 7006, payload: 02 02') > -1) {
+    description = description + "00 "
+    }
+    // end special routine
 	if (description != "updated") {
 		log.debug "parse() >> zwave.parse($description)"
 		def cmd = zwave.parse(description, commandClassVersions)
@@ -181,14 +184,12 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport 
     log.debug "---CONFIGURATION REPORT V1--- ${device.displayName} parameter ${cmd.parameterNumber} with a byte size of ${cmd.size} is set to ${cmd.configurationValue}"
     switch (cmd.parameterNumber) {
         case 1:
-            name = "TopOn"
+            name = "topon"
             value = reportValue == 1 ? "true" : "false"
-            log.debug "TopOn = $value"
             break
         case 2:
-            name = "LEDFollow"
+            name = "ledfollow"
             value = reportValue == 1 ? "true" : "false"
-            log.debug "LEDFollow = $value"
             break
         default:
             break
@@ -203,12 +204,11 @@ def zwaveEvent(physicalgraph.zwave.commands.hailv1.Hail cmd) {
 
 def zwaveEvent(physicalgraph.zwave.commands.manufacturerspecificv2.ManufacturerSpecificReport cmd) {
 	log.debug "manufacturerId:   ${cmd.manufacturerId}"
-	log.debug "manufacturerName: ${cmd.manufacturerName}"
 	log.debug "productId:        ${cmd.productId}"
 	log.debug "productTypeId:    ${cmd.productTypeId}"
 	def msr = String.format("%04X-%04X-%04X", cmd.manufacturerId, cmd.productTypeId, cmd.productId)
 	updateDataValue("MSR", msr)
-	updateDataValue("manufacturer", cmd.manufacturerName)
+	updateDataValue("manufacturer", "Zooz")
 	createEvent([descriptionText: "$device.displayName MSR: $msr", isStateChange: false])
 }
 
@@ -278,4 +278,3 @@ def refresh() {
 	}
 	delayBetween(commands,100)
 }
-
