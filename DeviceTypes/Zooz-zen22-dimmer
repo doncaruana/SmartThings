@@ -15,16 +15,18 @@
  *         Version v2
  *         ZWavePlus Info v2
  *  
- *   Parm Size Description                                   Value
- *      1    1 Invert Switch                                 0 (Default)-Upper paddle turns light on, 1-Lower paddle turns light on
- *      2    1 LED Indicator                                 0 (Default)-LED is on when light is OFF, 1-LED is on when light is ON
- *   Note1: There is a bug in this device in that it reports the length of parameter 2 as 2, then only sends one value byte. Attempting to retrieve that
- *          parameter will result in this error: Exception 'java.lang.IndexOutOfBoundsException: toIndex = 4' encountered parsing 'cmd: 7006, payload: 02 02 00'
+ *   Parm Size Description               Value
+ *      1    1 Invert Switch             0 (Default)-Upper paddle turns light on, 1-Lower paddle turns light on
+ *      2    1 LED Indicator             0 (Default)-LED is on when light is OFF, 1-LED is on when light is ON
+ *   Note1: There is a bug in this device in that it reports the length of parameter 2 as 2, then only sends one value byte. 
+ *          Attempting to retrieve that parameter will result in this error: 
+ *          Exception 'java.lang.IndexOutOfBoundsException: toIndex = 4' encountered parsing 'cmd: 7006, payload: 02 02 00'
  *          The toIndex indicates that it fails looking for the 4th byte of the payload (the 2nd byte is the length).
- *          The simple workaround is to just look for a configuration report on parameter 2 and add a byte to the returned description. The 2nd byte is the least
- *          significant byte anyway and also is just not processed in the ConfigurationReport routine. Live logging will show the above error, but otherwise the
- *          device and handler work fine.
- *   Note2: Configuration is not officially documented as a command class for this device but it is and must be available to use parameters
+ *          The simple workaround is to just look for a configuration report on parameter 2 and add a byte to the returned 
+ *          description. The 2nd byte is the least significant byte anyway and also is just not processed in the 
+ *          ConfigurationReport routine. Live logging will show the above error, but otherwise the device and handler work fine.
+ *   Note2: Configuration is not officially documented as a command class for this device but it is and must be available to 
+ *          use parameters
  */
 metadata {
 	definition (name: "Zooz Zen22 Dimmer Switch", namespace: "doncaruana", author: "Don Caruana") {
@@ -102,7 +104,7 @@ private getCommandClassVersions() {
 		0x5E: 2,  // ZwaveplusInfo
 		0x27: 1,  // All Switch
 		0x26: 1,  // Multilevel Switch
-    0x70: 1,  // Configuration
+		0x70: 1,  // Configuration
 	]
 }
 
@@ -114,17 +116,17 @@ def configure() {
 	cmds << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 1).format())
 	cmds << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 2).format())
 	cmds << new physicalgraph.device.HubAction(zwave.manufacturerSpecificV2.manufacturerSpecificGet().format())
-    sendHubCommand(cmds, 1500)
+	sendHubCommand(cmds, 1500)
 }
 
 def updated(){
-    log.debug "Updated with settings: ${settings}"
+	log.debug "Updated with settings: ${settings}"
 	def commands = []
-    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [ledIndicator == true ? 1 : 0], parameterNumber: 2, size: 1).format())
-    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [invertSwitch == true ? 1 : 0], parameterNumber: 1, size: 1).format())
-    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 1).format())
-    commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 2).format())
-    sendHubCommand(commands, 1500)
+	commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [ledIndicator == true ? 1 : 0], parameterNumber: 2, size: 1).format())
+	commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationSet(configurationValue: [invertSwitch == true ? 1 : 0], parameterNumber: 1, size: 1).format())
+	commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 1).format())
+	commands << new physicalgraph.device.HubAction(zwave.configurationV1.configurationGet(parameterNumber: 2).format())
+	sendHubCommand(commands, 1500)
 // Device-Watch simply pings if no device events received for 32min(checkInterval)
 	sendEvent(name: "checkInterval", value: 2 * 15 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
 }
@@ -196,7 +198,6 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport 
     }
 	createEvent([name: name, value: value])
 }
-
 
 def zwaveEvent(physicalgraph.zwave.commands.hailv1.Hail cmd) {
 	createEvent([name: "hail", value: "hail", descriptionText: "Switch button was pressed", displayed: false])
